@@ -17,6 +17,7 @@ repositories {
 
 dependencies {
     implementation 'org.bouncycastle:bcprov-jdk18on:1.77'
+    implementation 'com.beust:jcommander:1.82'
 }
 
 // Apply a specific Java toolchain to ease working on different environments.

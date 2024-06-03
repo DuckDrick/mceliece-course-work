@@ -1,10 +1,9 @@
-package org.example;
+package org.example.utils;
 
 import org.bouncycastle.pqc.legacy.math.linearalgebra.GF2Matrix;
 import org.bouncycastle.pqc.legacy.math.linearalgebra.GF2Vector;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 public class Utils {
@@ -72,44 +71,17 @@ public class Utils {
     }
   }
 
-
-
   public static GF2Matrix createGF2MatrixFromColumns(GF2Matrix in, List<Integer> columns) {
-    var out = new int[in.getNumRows()][(columns.size() - 1) / 32 + 1];
-    var matrix = in.getIntArray();
+    var newMatrix = new int[columns.size()][];
+
+    var inTrans = (GF2Matrix) in.computeTranspose();
 
     for (int i = 0; i < columns.size(); i++) {
-      setColumn(out, getColumn(matrix, columns.get(i)), i);
+      newMatrix[i] = inTrans.getRow(columns.get(i));
     }
 
-    return new GF2Matrix(columns.size(), out);
-  }
-
-  private static int[] getColumn(int[][] in, int pos) {
-    var result = new ArrayList<Integer>();
-
-    var elem   = pos % 32;
-    var length = pos / 32;
-
-    for (int[] ints : in) {
-      result.add((ints[length] >>> elem) & 1);
-    }
-
-    return result.stream().mapToInt(a -> a).toArray();
-  }
-
-
-  private static void setColumn(int[][] in, int[] values, int pos) {
-    var elem   = pos % 32;
-    var length = pos / 32;
-
-    for (var i = 0; i < in.length; i++) {
-      var a = in[i][length];
-      var el = (a >>> elem) & 1;
-      if (el != values[i]) {
-        in[i][length] = a ^ (1 << elem);
-      }
-    }
+    var resultTransposed = new GF2Matrix(columns.size(), newMatrix);
+    return (GF2Matrix) resultTransposed.computeTranspose();
   }
 
   public static GF2Vector createGF2VectorFromColumns(GF2Vector in, List<Integer> columns) {
@@ -136,5 +108,19 @@ public class Utils {
     if (el != value) {
       in[length] = a ^ (1 << elem);
     }
+  }
+
+
+  public static void printResults(List<Double> timesPerBit) {
+    System.out.printf("Average (ms): %f\n", timesPerBit.stream().mapToDouble(a -> a).average().orElse(0));
+
+    System.out.printf("Percentiles - 25: %f; 50: %f; 75: %f; 90: %f; 95: %f; 99: %f;\n",
+            Utils.percentile(timesPerBit, 25),
+            Utils.percentile(timesPerBit, 50),
+            Utils.percentile(timesPerBit, 75),
+            Utils.percentile(timesPerBit, 90),
+            Utils.percentile(timesPerBit, 95),
+            Utils.percentile(timesPerBit, 99)
+    );
   }
 }
