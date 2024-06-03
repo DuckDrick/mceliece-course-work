@@ -4,72 +4,62 @@ import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.stream.Collectors;
 
+import com.beust.jcommander.JCommander;
 import org.bouncycastle.pqc.legacy.math.linearalgebra.GF2Vector;
+import org.example.attacks.*;
+import org.example.utils.Args;
+import org.example.utils.Utils;
 
 public class App {
-  private static int m = 6;
-  private static int t = 9;
+  private static int m = 8;
+  private static int t = 20;
 
   private static int n = (int) Math.pow(2, m);
   private static int k = n - m * t;
 
-  private static String attack = "one";
-
-  private static void recalcParameters(int m, int t) {
-    App.m = m;
-    App.t = t;
-    App.n = (int) Math.pow(2, m);
-    App.k = n - m * t;
+  private static void recalcParameters() {
+    App.m = args.m;
+    App.t = args.t;
+    App.n = (int) Math.pow(2, args.m);
+    App.k = App.n - App.m * App.t;
   }
-  public static void main(String[] args) throws NoSuchAlgorithmException {
 
-    int count = args.length > 1 ? Integer.parseInt(args[2]) : 100;
+  public static Args args = new Args();
 
-    attack = args.length > 2 ? args[3] : attack;
+  public static void main(String[] argv) throws NoSuchAlgorithmException {
+    JCommander.newBuilder()
+            .addObject(args)
+            .build()
+            .parse(argv);
 
-    if (args.length > 0) {
-      recalcParameters(Integer.parseInt(args[0]), Integer.parseInt(args[1]));
-    }
+    int count = args.tries;
+
+    recalcParameters();
+
     var times = new ArrayList<Double>();
 
-
     SecureRandom rnd = SecureRandom.getInstance("SHA1PRNG");
-    rnd.setSeed("SomeRandom".getBytes(StandardCharsets.UTF_8));
+    rnd.setSeed(args.seed.getBytes(StandardCharsets.UTF_8));
+
 
     for (int i = 0; i < count; i++) {
-      var rez = new App().execute(rnd);
-      times.add(rez.first / 1000000.0);
+      var rez = new App().execute(rnd, args.attackName);
+      times.add(rez / 1000000.0);
     }
-
     times.sort(Double::compare);
 
-    System.out.printf("Tries: %d\n", count);
     System.out.printf("T: %d; N: %d; K: %d;\n", t, n ,k);
     System.out.println("----------TOTAL----------");
-    printResults(times);
+    Utils.printResults(times);
 
     System.out.println("----------PER-BIT----------");
     var timesPerBit = times.stream().map(a -> a / k).collect(Collectors.toList());
-    printResults(timesPerBit);
+    Utils.printResults(timesPerBit);
   }
 
-  private static void printResults(List<Double> timesPerBit) {
-    System.out.printf("Average (ms): %f\n", timesPerBit.stream().mapToDouble(a -> a).average().orElse(0));
-
-    System.out.printf("Percentiles - 25: %f; 50: %f; 75: %f; 90: %f; 95: %f; 99: %f;\n",
-            Utils.percentile(timesPerBit, 25),
-            Utils.percentile(timesPerBit, 50),
-            Utils.percentile(timesPerBit, 75),
-            Utils.percentile(timesPerBit, 90),
-            Utils.percentile(timesPerBit, 95),
-            Utils.percentile(timesPerBit, 99)
-    );
-  }
-
-  public Tuple<Double, long[]> execute(SecureRandom random)
+  public Double execute(SecureRandom random, String attackName)
           throws NoSuchAlgorithmException {
 
     SecureRandom rnd;
@@ -81,34 +71,38 @@ public class App {
 
     var mcEliece = McEliece.getInstance(m, t, rnd);
 
-    var e1 = new GF2Vector(mcEliece.publicKey.getN(), mcEliece.publicKey.getT(), rnd);
-    var e2 = new GF2Vector(mcEliece.publicKey.getN(), mcEliece.publicKey.getT(), rnd);
     var message = new GF2Vector(mcEliece.publicKey.getK(), rnd);
 
-    var c1 = (GF2Vector) mcEliece.encrypt(message, e1);
-    var c2 = (GF2Vector) mcEliece.encrypt(message, e2);
+    IAttack attack = switch (attackName.toLowerCase()) {
+      case "mreg" -> new MessageResendErrorGeneration(mcEliece.publicKey);
+      case "mri" -> new MessageResendIndependant(mcEliece.publicKey);
+      case "lbc" -> new LeeBrickellCombinations(mcEliece.publicKey, args.p);
+      case "lbs" -> new LeeBrickellShuffle(mcEliece.publicKey, args.p);
+      default -> throw new IllegalArgumentException("No such attack type has been implemented");
+    };
+
+    attack.prepare(mcEliece, random, message);
 
     long start = System.nanoTime();
+    String rez;
 
-    var msgResend = new MessageResend(mcEliece.publicKey, c1, c2);
-    Tuple<String, Integer> rez;
-    if (attack.equalsIgnoreCase("two")) {
+    if (args.shouldRetry) {
       do {
-        rez = msgResend.attack2();
-
-      } while (!rez.first.equals(message.toString().replace(" ", "")));
+        rez = attack.attack();
+      } while (!rez.equals(message.toString().replace(" ", "")));
     } else {
-      rez = msgResend.attack();
+      rez = attack.attack();
+
+      if (rez == null) {
+        System.out.println("Failed LPS attack on");
+        System.out.println(message);
+        System.out.println(m);
+        System.out.println(t);
+      }
     }
+
     long end = System.nanoTime();
 
-    if (!rez.first.equals(message.toString().replace(" ", ""))) {
-      System.out.println(rez.first);
-      System.out.println(message.toString().replace(" ", ""));
-      System.out.println("Failed to find solutions");
-      return new Tuple<>(0d, new long[]{1,0});
-    }
-
-    return new Tuple<>((double) (end - start), new long[]{rez.second, (long) 0});
+    return (double) end - (double) start;
   }
 }
